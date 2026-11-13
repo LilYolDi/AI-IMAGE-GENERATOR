@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -62,6 +63,37 @@ async function readCloudflareError(response) {
   }
 }
 
+// ---------- Подготовка референса ----------
+
+async function prepareReference(file) {
+  if (!file) return null;
+
+  let sharp;
+
+  try {
+    sharp = require("sharp");
+  } catch {
+    throw new Error(
+      "Для обработки фото-образца нужен пакет sharp. Проверьте package.json."
+    );
+  }
+
+  // Сохраняем пропорции и уменьшаем изображение
+  // так, чтобы обе стороны были меньше 512 пикселей.
+  const buffer = await sharp(file.buffer)
+    .rotate()
+    .resize({
+      width: 511,
+      height: 511,
+      fit: "inside",
+      withoutEnlargement: true
+    })
+    .jpeg({ quality: 90 })
+    .toBuffer();
+
+  return buffer;
+}
+
 // ---------- Точная проверка требований пользователя ----------
 
 function addExplicitConstraints(originalPrompt, improvedPrompt) {
@@ -87,7 +119,6 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
   const asksForNoSocks =
     /(без\s+нос|не\s+надевать\s+нос|без\s+носк)/i.test(prompt);
 
-  // Носки и обувь — независимые элементы одежды.
   if (asksForSocks && !asksForNoSocks) {
     constraints.push(
       "The person MUST wear socks. The socks must be clearly visible."
@@ -105,14 +136,13 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
       );
     }
   }
-  
-  if (asksForSocks) {
-  constraints.push(
-    "The socks must be clean, intact, solid fabric, with no holes, no tears, no rips, no fraying and no damage. They must look like normal new everyday socks."
-  );
-}
 
-  // Отсутствие обуви не означает отсутствие носков.
+  if (asksForSocks) {
+    constraints.push(
+      "The socks must be clean, intact, solid fabric, with no holes, no tears, no rips, no fraying and no damage. They must look like normal new everyday socks."
+    );
+  }
+
   if (asksForNoShoes) {
     constraints.push(
       "NO SHOES AT ALL. No boots, no sneakers, no heels, no sandals, no slippers and no other footwear."
@@ -158,6 +188,7 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
 
 async function improvePrompt(originalPrompt, mode = "generate") {
   const editing = mode === "edit";
+  const hasReference = mode === "generate-reference";
 
   const systemPrompt = editing
     ? `
@@ -175,6 +206,34 @@ STRICT RULES:
 - Do not change identity, face, age, gender, hairstyle, clothing, pose or background unless requested.
 - Do not invent additional objects or people.
 - Output ONLY the final English instruction.
+`
+    : hasReference
+    ? `
+You are a professional image prompt engineer specializing in FLUX.2 Klein.
+
+The user has attached a reference image.
+
+Convert the user's Russian description into a precise English image generation prompt.
+
+REFERENCE IMAGE RULES:
+1. The attached image is the primary visual reference.
+2. Preserve the original composition, subject placement, pose, body position and camera angle.
+3. Preserve the framing, perspective, lighting, background and environment.
+4. Preserve the person's appearance, hairstyle, clothing and accessories unless the user explicitly requests a change.
+5. Change ONLY the details explicitly requested by the user.
+6. Do not redesign the image or create a different scene.
+7. Do not add people, objects or details that were not requested.
+8. Do not describe the reference as a new unrelated scene.
+9. The user's explicit instructions override the corresponding details in the reference.
+10. Clothing items are independent. Removing shoes does NOT mean removing socks.
+11. If the user requests socks without shoes, keep socks ON the feet and remove footwear only.
+12. Preserve specific colors, lengths and clothing details exactly as requested.
+
+The attached image is the source of visual truth.
+The user's text is the source of requested changes.
+
+Return ONLY the final English image prompt.
+No explanations or comments.
 `
     : `
 You are a professional image prompt engineer specializing in FLUX.2 Klein.
@@ -256,7 +315,6 @@ No explanations or comments.
     throw new Error("Получено пустое описание после обработки.");
   }
 
-  // Дополнительная проверка исходных требований.
   improved = addExplicitConstraints(originalPrompt, improved);
 
   console.log("Original prompt:", originalPrompt);
@@ -329,13 +387,14 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// ---------- Генерация ----------
+// ---------- Генерация с необязательным фото-образцом ----------
 
-app.post("/api/generate", async (req, res) => {
+app.post("/api/generate", upload.single("reference"), async (req, res) => {
   try {
     if (!checkConfig(res)) return;
 
     const { prompt, size } = req.body || {};
+    const referenceFile = req.file || null;
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return res.status(400).json({
@@ -349,9 +408,16 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    console.log("Preparing generation prompt...");
+    console.log(
+      referenceFile
+        ? "Preparing generation with reference image..."
+        : "Preparing generation prompt..."
+    );
 
-    const improvedPrompt = await improvePrompt(prompt, "generate");
+    const improvedPrompt = await improvePrompt(
+      prompt,
+      referenceFile ? "generate-reference" : "generate"
+    );
 
     const [width, height] = getDimensions(size);
 
@@ -360,6 +426,20 @@ app.post("/api/generate", async (req, res) => {
     form.append("prompt", improvedPrompt);
     form.append("width", String(width));
     form.append("height", String(height));
+
+    if (referenceFile) {
+      const referenceBuffer = await prepareReference(referenceFile);
+
+      form.append(
+        "input_image_0",
+        new Blob([referenceBuffer], {
+          type: "image/jpeg"
+        }),
+        "reference.jpg"
+      );
+
+      console.log("Reference image attached to FLUX request.");
+    }
 
     const image = await runCloudflare(form);
 
@@ -448,4 +528,3 @@ app.listen(PORT, () => {
   console.log("Image model:", IMAGE_MODEL);
   console.log("Prompt model:", PROMPT_MODEL);
 });
-
