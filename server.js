@@ -63,6 +63,92 @@ async function readCloudflareError(response) {
   }
 }
 
+// ---------- Точная проверка требований пользователя ----------
+
+function addExplicitConstraints(originalPrompt, improvedPrompt) {
+  const prompt = originalPrompt.toLowerCase().replace(/ё/g, "е");
+
+  const constraints = [];
+
+  const asksForSocks =
+    /нос(ок|ки|ков|ках|кам|очк|очк[аиу]|очек)/i.test(prompt);
+
+  const asksForBlackSocks =
+    /(черн\w*.{0,35}нос|нос\w*.{0,35}черн)/i.test(prompt);
+
+  const asksForShortSocks =
+    /(коротк\w*.{0,35}нос|нос\w*.{0,35}коротк)/i.test(prompt);
+
+  const asksForPants =
+    /(брюк|штан|джинс|тренировочн\w+\s+штан)/i.test(prompt);
+
+  const asksForNoShoes =
+    /(без\s+(?:всякой\s+)?обув|не\s+обув|обувь\s+не|никак\w*\s+обув)/i.test(prompt);
+
+  const asksForNoSocks =
+    /(без\s+нос|не\s+надевать\s+нос|без\s+носк)/i.test(prompt);
+
+  // Носки и обувь — независимые элементы одежды.
+  if (asksForSocks && !asksForNoSocks) {
+    constraints.push(
+      "The person MUST wear socks. The socks must be clearly visible."
+    );
+
+    if (asksForBlackSocks) {
+      constraints.push(
+        "The socks MUST be black. Do not change their color."
+      );
+    }
+
+    if (asksForShortSocks) {
+      constraints.push(
+        "The socks MUST be short ankle socks, not long socks or stockings."
+      );
+    }
+  }
+
+  // Отсутствие обуви не означает отсутствие носков.
+  if (asksForNoShoes) {
+    constraints.push(
+      "NO SHOES AT ALL. No boots, no sneakers, no heels, no sandals, no slippers and no other footwear."
+    );
+
+    if (asksForSocks && !asksForNoSocks) {
+      constraints.push(
+        "IMPORTANT: Keep the requested socks ON BOTH FEET. The feet must remain covered by socks. Do NOT show bare feet. No footwear, but socks are REQUIRED."
+      );
+    } else {
+      constraints.push(
+        "Do not add any footwear. Follow the user's exact instructions about socks and feet."
+      );
+    }
+  }
+
+  if (asksForPants) {
+    constraints.push(
+      "The person MUST wear the requested pants or trousers. Do not replace them with a skirt, shorts or underwear."
+    );
+  }
+
+  if (asksForNoSocks) {
+    constraints.push(
+      "Do not add socks or stockings. Follow the user's requested footwear independently."
+    );
+  }
+
+  if (constraints.length === 0) {
+    return improvedPrompt;
+  }
+
+  const result = improvedPrompt.trim() +
+    "\n\nMANDATORY USER REQUIREMENTS:\n" +
+    constraints.map((item, index) => `${index + 1}. ${item}`).join("\n");
+
+  console.log("Explicit constraints:", constraints);
+
+  return result;
+}
+
 // ---------- ИИ-обработка запросов ----------
 
 async function improvePrompt(originalPrompt, mode = "generate") {
@@ -72,46 +158,45 @@ async function improvePrompt(originalPrompt, mode = "generate") {
     ? `
 You are a professional AI image editing prompt engineer.
 
-Convert the user's Russian editing instruction into a precise, natural English instruction for FLUX.2 Klein.
+Convert the user's Russian editing instruction into precise English for FLUX.2 Klein.
 
 STRICT RULES:
 - Preserve the exact meaning of the user's request.
-- Change ONLY the elements the user explicitly asks to change.
+- Change ONLY elements explicitly requested.
 - Preserve everything else in the original image.
-- Do not change faces, identity, age, gender, hairstyle, clothing, pose, background, objects or composition unless explicitly requested.
-- Do not invent additional objects, people or details.
-- Do not turn an editing request into a completely new image.
-- Use clear, direct English.
-- Output ONLY the final editing instruction.
+- Clothing items are independent. Removing shoes does NOT mean removing socks.
+- If the user requests socks without shoes, keep socks on the feet.
+- Never confuse socks with bare feet.
+- Do not change identity, face, age, gender, hairstyle, clothing, pose or background unless requested.
+- Do not invent additional objects or people.
+- Output ONLY the final English instruction.
 `
     : `
 You are a professional image prompt engineer specializing in FLUX.2 Klein.
 
-Convert the user's Russian description into a precise, detailed English image generation prompt.
-
-YOUR MAIN GOAL:
-Make the generated image match the user's description as closely as possible.
+Convert the user's Russian description into a precise English image generation prompt.
 
 STRICT RULES:
-1. Preserve every important detail from the original request.
-2. Never change the requested subject, number of people, gender, age, appearance or identity.
-3. Preserve requested clothing, colors, hairstyle, facial features and accessories.
-4. Preserve the requested pose, actions, body position and interactions.
-5. Preserve the location, background, objects and environment.
-6. Preserve the requested camera angle, framing, lighting, atmosphere and visual style.
-7. Never add people, objects, animals or other elements that the user did not request.
+1. Preserve every important detail.
+2. Preserve the requested subject, number of people, gender and age.
+3. Preserve appearance, clothing, colors, hairstyle and accessories.
+4. Preserve pose, actions and body position.
+5. Preserve background and environment.
+6. Preserve camera angle, framing and lighting.
+7. Never add unrequested people or objects.
 8. Do not replace specific details with generic descriptions.
-9. Do not contradict any part of the original request.
-10. If something is not specified, do not invent unnecessary details.
-11. Use natural, clear and precise English suitable for FLUX.2.
-12. Describe the scene as one coherent image, not as a story.
+9. Understand negative instructions correctly.
+10. Removing one clothing item NEVER means removing another clothing item.
+11. Shoes, socks, trousers and other clothing are separate items.
+12. "Without shoes but wearing socks" means socks remain ON the feet and NO shoes are present.
+13. Never interpret "without shoes" as "barefoot" when socks are requested.
+14. If the user requests a specific color or length of socks, preserve it exactly.
+15. If something is not specified, do not invent unnecessary details.
 
-IMPORTANT:
 The original user description is the source of truth.
-Your job is to translate and clarify it, NOT creatively reinterpret it.
 
 Return ONLY the final English image prompt.
-Do not include explanations, headings, quotation marks or comments.
+No explanations or comments.
 `;
 
   const response = await fetch(cloudflareUrl(PROMPT_MODEL), {
@@ -166,8 +251,11 @@ Do not include explanations, headings, quotation marks or comments.
     throw new Error("Получено пустое описание после обработки.");
   }
 
+  // Дополнительная проверка исходных требований.
+  improved = addExplicitConstraints(originalPrompt, improved);
+
   console.log("Original prompt:", originalPrompt);
-  console.log("Improved prompt:", improved);
+  console.log("Final prompt:", improved);
 
   return improved;
 }
