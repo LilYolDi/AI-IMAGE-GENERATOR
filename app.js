@@ -1,3 +1,4 @@
+
 const promptInput = document.getElementById("promptInput");
 const sendBtn = document.getElementById("sendBtn");
 const chatMessages = document.getElementById("chatMessages");
@@ -7,6 +8,80 @@ const galleryPage = document.getElementById("galleryPage");
 const galleryGrid = document.getElementById("galleryGrid");
 const emptyGallery = document.getElementById("emptyGallery");
 const toast = document.getElementById("toast");
+
+// ---------- Референсное изображение ----------
+
+const referenceInput = document.getElementById("referenceInput");
+const attachImageBtn = document.getElementById("attachImageBtn");
+const referencePreview = document.getElementById("referencePreview");
+const referencePreviewImage = document.getElementById("referencePreviewImage");
+const referenceFileName = document.getElementById("referenceFileName");
+const removeReferenceBtn = document.getElementById("removeReferenceBtn");
+
+let selectedReference = null;
+let referencePreviewUrl = null;
+
+function showReferencePreview(file) {
+  if (!file) return;
+
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    showToast("Выбери изображение PNG, JPEG или WEBP.");
+    return;
+  }
+
+  if (file.size > 20 * 1024 * 1024) {
+    showToast("Размер фотографии не должен превышать 20 МБ.");
+    return;
+  }
+
+  selectedReference = file;
+
+  if (referencePreviewUrl) {
+    URL.revokeObjectURL(referencePreviewUrl);
+  }
+
+  referencePreviewUrl = URL.createObjectURL(file);
+
+  referencePreviewImage.src = referencePreviewUrl;
+  referenceFileName.textContent = file.name;
+
+  referencePreview.classList.remove("hidden");
+}
+
+function removeReference() {
+  selectedReference = null;
+
+  if (referencePreviewUrl) {
+    URL.revokeObjectURL(referencePreviewUrl);
+    referencePreviewUrl = null;
+  }
+
+  referencePreviewImage.removeAttribute("src");
+  referenceFileName.textContent = "";
+  referencePreview.classList.add("hidden");
+
+  if (referenceInput) {
+    referenceInput.value = "";
+  }
+}
+
+if (attachImageBtn && referenceInput) {
+  attachImageBtn.addEventListener("click", () => {
+    referenceInput.click();
+  });
+
+  referenceInput.addEventListener("change", () => {
+    const file = referenceInput.files?.[0];
+
+    if (file) {
+      showReferencePreview(file);
+    }
+  });
+}
+
+if (removeReferenceBtn) {
+  removeReferenceBtn.addEventListener("click", removeReference);
+}
 
 let messages = [];
 let busy = false;
