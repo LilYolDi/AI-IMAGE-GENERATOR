@@ -78,8 +78,6 @@ async function prepareReference(file) {
     );
   }
 
-  // Сохраняем пропорции и уменьшаем изображение
-  // так, чтобы обе стороны были меньше 512 пикселей.
   const buffer = await sharp(file.buffer)
     .rotate()
     .resize({
@@ -94,7 +92,7 @@ async function prepareReference(file) {
   return buffer;
 }
 
-// ---------- Точная проверка требований пользователя ----------
+// ---------- Обязательные требования пользователя ----------
 
 function addExplicitConstraints(originalPrompt, improvedPrompt) {
   const prompt = originalPrompt.toLowerCase().replace(/ё/g, "е");
@@ -102,7 +100,7 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
   const constraints = [];
 
   const asksForSocks =
-    /нос(ок|ки|ков|ках|кам|очк|очк[аиу]|очек)/i.test(prompt);
+    /нос(ок|ки|ков|ках|кам|очк|очек)/i.test(prompt);
 
   const asksForBlackSocks =
     /(черн\w*.{0,35}нос|нос\w*.{0,35}черн)/i.test(prompt);
@@ -118,6 +116,51 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
 
   const asksForNoSocks =
     /(без\s+нос|не\s+надевать\s+нос|без\s+носк)/i.test(prompt);
+
+  const asksForFeet =
+    /(ступн|стоп|ноги|ногах|ногами|пальц\w+\s+ног)/i.test(prompt);
+
+  const asksForLegs =
+    /(ноги|ногах|ногами|бедр|икр|голен)/i.test(prompt);
+
+  const asksForFullBody =
+    /(полный\s+рост|во\s+весь\s+рост|целиком|с\s+головы\s+до\s+ног|в\s+полный\s+рост)/i.test(prompt);
+
+  const asksForPose =
+    /(поз[ауы]|позу|позиц|стоять|стоит|стоя|сидеть|сидит|сидя|лежать|лежит|лежа|на\s+коленях|на\s+четвереньках|повернут|повернуться|наклонить|наклониться|поднять\s+рук|опустить\s+рук|скрестить|развернут|развернуться)/i.test(prompt);
+
+  const asksForCamera =
+    /(ракурс|вид\s+сверху|вид\s+снизу|сбоку|спереди|сзади|камера|точка\s+съемки)/i.test(prompt);
+
+  if (asksForPose) {
+    constraints.push(
+      "IMPORTANT: Follow the exact pose and body position requested by the user. If a different pose is requested, change the reference pose. NEVER preserve the original pose against the user's instructions."
+    );
+  }
+
+  if (asksForFullBody) {
+    constraints.push(
+      "Show the entire person from head to feet. Use full-body framing. Do not crop the head, legs, feet or any part of the body."
+    );
+  }
+
+  if (asksForFeet) {
+    constraints.push(
+      "The requested feet and toes must be clearly visible in the image. Keep both feet inside the frame when both are requested. Do not hide them behind objects, furniture, clothing or another body part. Do not crop them."
+    );
+  }
+
+  if (asksForLegs) {
+    constraints.push(
+      "The requested legs must be clearly visible. Include the necessary lower-body area in the frame. Do not crop or hide the legs."
+    );
+  }
+
+  if (asksForCamera) {
+    constraints.push(
+      "Follow the exact camera angle and viewing direction requested by the user, even if it differs from the reference image."
+    );
+  }
 
   if (asksForSocks && !asksForNoSocks) {
     constraints.push(
@@ -135,26 +178,24 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
         "The socks MUST be short ankle socks, not long socks or stockings."
       );
     }
-  }
 
-  if (asksForSocks) {
     constraints.push(
-      "The socks must be clean, intact, solid fabric, with no holes, no tears, no rips, no fraying and no damage. They must look like normal new everyday socks."
+      "The socks must be clean, intact, solid fabric, with no holes, tears, rips, fraying or damage."
     );
   }
 
   if (asksForNoShoes) {
     constraints.push(
-      "NO SHOES AT ALL. No boots, no sneakers, no heels, no sandals, no slippers and no other footwear."
+      "NO SHOES AT ALL. No boots, sneakers, heels, sandals, slippers or other footwear."
     );
 
     if (asksForSocks && !asksForNoSocks) {
       constraints.push(
-        "IMPORTANT: Keep the requested socks ON BOTH FEET. The feet must remain covered by socks. Do NOT show bare feet. No footwear, but socks are REQUIRED."
+        "Keep the requested socks ON BOTH FEET. Do NOT show bare feet. No footwear, but socks are REQUIRED."
       );
     } else {
       constraints.push(
-        "Do not add any footwear. Follow the user's exact instructions about socks and feet."
+        "Do not add footwear. Follow the user's exact instructions about socks and feet."
       );
     }
   }
@@ -175,7 +216,8 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
     return improvedPrompt;
   }
 
-  const result = improvedPrompt.trim() +
+  const result =
+    improvedPrompt.trim() +
     "\n\nMANDATORY USER REQUIREMENTS:\n" +
     constraints.map((item, index) => `${index + 1}. ${item}`).join("\n");
 
@@ -190,78 +232,103 @@ async function improvePrompt(originalPrompt, mode = "generate") {
   const editing = mode === "edit";
   const hasReference = mode === "generate-reference";
 
-  const systemPrompt = editing
-    ? `
-You are a professional AI image editing prompt engineer.
+  const commonRules = `
+GENERAL RULES:
+- Preserve the user's exact meaning and all important details.
+- Do not shorten the description by removing important requirements.
+- Do not replace specific details with vague descriptions.
+- Do not invent unrequested people, objects, clothing or accessories.
+- Understand negative instructions correctly.
+- Shoes, socks, trousers and other clothing items are independent.
+- Removing shoes does NOT mean removing socks.
+- If the user requests socks without shoes, keep socks on the feet and remove footwear only.
+- Follow requested colors, clothing types, lengths and materials precisely.
+- For mature or sensual themes, all depicted people must be clearly adults.
+- Never turn an adult character into a minor.
+- Output ONLY the final English image prompt.
+- Do not include explanations or comments.
+`;
 
-Convert the user's Russian editing instruction into precise English for FLUX.2 Klein.
+  let systemPrompt;
 
-STRICT RULES:
-- Preserve the exact meaning of the user's request.
-- Change ONLY elements explicitly requested.
-- Preserve everything else in the original image.
-- Clothing items are independent. Removing shoes does NOT mean removing socks.
-- If the user requests socks without shoes, keep socks on the feet.
-- Never confuse socks with bare feet.
-- Do not change identity, face, age, gender, hairstyle, clothing, pose or background unless requested.
-- Do not invent additional objects or people.
-- Output ONLY the final English instruction.
-`
-    : hasReference
-    ? `
-You are a professional image prompt engineer specializing in FLUX.2 Klein.
+  if (editing) {
+    systemPrompt = `
+You are a professional AI image editing prompt engineer specializing in FLUX.2 Klein.
+
+Convert the user's Russian editing instruction into a precise English image editing prompt.
+
+EDITING RULES:
+1. Change ONLY the elements explicitly requested by the user.
+2. Preserve the original identity and recognizable appearance of the person.
+3. Preserve the original face, hairstyle, clothing, accessories, background, lighting and composition unless the user requests a change.
+4. If the user requests a different pose, change the pose. Do not preserve the original pose against the user's instruction.
+5. If the user requests a different camera angle, follow the requested camera angle.
+6. If the user requests full-body framing, show the entire person from head to feet.
+7. If the user requests visible feet or legs, make sure they are inside the frame and not hidden or cropped.
+8. Do not change unrelated details.
+9. Do not add extra people or objects.
+
+${commonRules}
+`;
+  } else if (hasReference) {
+    systemPrompt = `
+You are a professional image generation prompt engineer specializing in FLUX.2 Klein.
 
 The user has attached a reference image.
 
-Convert the user's Russian description into a precise English image generation prompt.
+Convert the user's Russian description into a precise, detailed English image generation prompt.
 
 REFERENCE IMAGE RULES:
-1. The attached image is the primary visual reference.
-2. Preserve the original composition, subject placement, pose, body position and camera angle.
-3. Preserve the framing, perspective, lighting, background and environment.
-4. Preserve the person's appearance, hairstyle, clothing and accessories unless the user explicitly requests a change.
-5. Change ONLY the details explicitly requested by the user.
-6. Do not redesign the image or create a different scene.
-7. Do not add people, objects or details that were not requested.
-8. Do not describe the reference as a new unrelated scene.
-9. The user's explicit instructions override the corresponding details in the reference.
-10. Clothing items are independent. Removing shoes does NOT mean removing socks.
-11. If the user requests socks without shoes, keep socks ON the feet and remove footwear only.
-12. Preserve specific colors, lengths and clothing details exactly as requested.
+1. Use the attached image as the primary visual reference for the person's appearance and the scene.
+2. Preserve the person's recognizable face, appearance, hairstyle and other visual characteristics unless the user requests changes.
+3. Preserve clothing, colors and accessories unless the user requests changes.
+4. Preserve the background, environment and lighting unless the user requests changes.
+5. Preserve the original composition and camera angle ONLY when the user has not requested a different composition or angle.
+6. Preserve the original pose ONLY when the user has not requested a different pose.
+7. If the user describes a new pose, the requested pose MUST replace the reference pose.
+8. If the user requests standing, sitting, lying down, kneeling or another specific position, follow that position precisely.
+9. If the user requests full-body framing, show the entire person from head to feet.
+10. If the user requests visible feet, legs or another body part, make that area clearly visible and keep it inside the frame.
+11. Do not hide requested body parts behind objects, furniture, clothing or other body parts.
+12. Do not crop requested body parts.
+13. If the user requests a different camera angle or viewing direction, follow the user's instruction instead of the reference.
+14. Change only the details requested by the user. Preserve all unrelated reference details.
+15. Do not add unrequested people, objects or scene elements.
+16. Never let the reference image override the user's explicit instructions.
 
-The attached image is the source of visual truth.
-The user's text is the source of requested changes.
+PRIORITY ORDER:
+1. The user's explicit text instructions.
+2. The reference image for all details the user did not ask to change.
 
-Return ONLY the final English image prompt.
-No explanations or comments.
-`
-    : `
-You are a professional image prompt engineer specializing in FLUX.2 Klein.
-
-Convert the user's Russian description into a precise English image generation prompt.
-
-STRICT RULES:
-1. Preserve every important detail.
-2. Preserve the requested subject, number of people, gender and age.
-3. Preserve appearance, clothing, colors, hairstyle and accessories.
-4. Preserve pose, actions and body position.
-5. Preserve background and environment.
-6. Preserve camera angle, framing and lighting.
-7. Never add unrequested people or objects.
-8. Do not replace specific details with generic descriptions.
-9. Understand negative instructions correctly.
-10. Removing one clothing item NEVER means removing another clothing item.
-11. Shoes, socks, trousers and other clothing are separate items.
-12. "Without shoes but wearing socks" means socks remain ON the feet and NO shoes are present.
-13. Never interpret "without shoes" as "barefoot" when socks are requested.
-14. If the user requests a specific color or length of socks, preserve it exactly.
-15. If something is not specified, do not invent unnecessary details.
-
-The original user description is the source of truth.
-
-Return ONLY the final English image prompt.
-No explanations or comments.
+${commonRules}
 `;
+  } else {
+    systemPrompt = `
+You are a professional image generation prompt engineer specializing in FLUX.2 Klein.
+
+Convert the user's Russian description into a precise and detailed English image generation prompt.
+
+GENERATION RULES:
+1. Preserve every important detail in the user's description.
+2. Follow the requested subject, number of people, appearance and adult age.
+3. Follow the requested clothing, colors, hairstyle and accessories.
+4. Follow the exact requested pose and body position.
+5. Follow the requested actions and interactions.
+6. Follow the requested background and environment.
+7. Follow the requested camera angle, perspective and framing.
+8. If full-body framing is requested, show the entire person from head to feet.
+9. If feet or legs are requested to be visible, keep them clearly visible and inside the frame.
+10. Do not hide or crop body parts that the user specifically asks to show.
+11. Never add unrequested people or objects.
+12. Do not replace specific details with generic descriptions.
+13. Removing one clothing item NEVER means removing another clothing item.
+14. Shoes, socks, trousers and other clothing are separate items.
+15. If the user requests a specific color, length or type of clothing, preserve it exactly.
+16. If something is not specified, do not invent unnecessary details.
+
+${commonRules}
+`;
+  }
 
   const response = await fetch(cloudflareUrl(PROMPT_MODEL), {
     method: "POST",
@@ -280,7 +347,7 @@ No explanations or comments.
           content: originalPrompt.trim()
         }
       ],
-      max_completion_tokens: 700,
+      max_completion_tokens: 900,
       temperature: 0.2,
       reasoning_effort: "low"
     })
