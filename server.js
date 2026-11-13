@@ -106,6 +106,12 @@ function addExplicitConstraints(originalPrompt, improvedPrompt) {
       );
     }
   }
+  
+  if (asksForSocks) {
+  constraints.push(
+    "The socks must be clean, intact, solid fabric, with no holes, no tears, no rips, no fraying and no damage. They must look like normal new everyday socks."
+  );
+}
 
   // Отсутствие обуви не означает отсутствие носков.
   if (asksForNoShoes) {
