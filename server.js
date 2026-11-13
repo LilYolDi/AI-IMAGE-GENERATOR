@@ -7,12 +7,12 @@ const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.OPENAI_API_KEY;
-const IMAGE_MODEL = process.env.IMAGE_MODEL || "gpt-image-1";
+
+const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+const MODEL = "@cf/black-forest-labs/flux-2-klein-4b";
 
 app.use(express.json({ limit: "10mb" }));
-
-// Все файлы сайта находятся в корне репозитория
 app.use(express.static(__dirname));
 
 const upload = multer({
@@ -20,130 +20,185 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter(req, file, cb) {
     const allowed = ["image/png", "image/jpeg", "image/webp"];
+
     if (!allowed.includes(file.mimetype)) {
       return cb(new Error("Поддерживаются PNG, JPEG и WEBP."));
     }
+
     cb(null, true);
   }
 });
 
-function checkApiKey(res) {
-  if (!API_KEY) {
-    res.status(500).json({ error: "Не настроен OPENAI_API_KEY на Render." });
+function checkConfig(res) {
+  if (!ACCOUNT_ID || !API_TOKEN) {
+    res.status(500).json({
+      error: "Не настроены CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN на Render."
+    });
     return false;
   }
+
   return true;
 }
 
-function errorMessage(data) {
-  return data?.error?.message || "Ошибка сервиса генерации.";
+async function runCloudflare(form) {
+  const url =
+    `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/run/${MODEL}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_TOKEN}`
+    },
+    body: form
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let message = errorText;
+
+    try {
+      const errorData = JSON.parse(errorText);
+      message =
+        errorData.errors?.map(item => item.message).join("; ") ||
+        errorData.error?.message ||
+        errorText;
+    } catch {}
+
+    throw new Error(`Cloudflare (${response.status}): ${message}`);
+  }
+
+  if (contentType.includes("application/json")) {
+    const data = await response.json();
+
+    const image =
+      data.result?.image ||
+      data.result ||
+      data.image;
+
+    if (typeof image === "string") {
+      return image.startsWith("data:image/")
+        ? image
+        : `data:image/png;base64,${image}`;
+    }
+
+    throw new Error("Cloudflare не вернул изображение.");
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  if (!buffer.length) {
+    throw new Error("Получено пустое изображение.");
+  }
+
+  const mime = contentType.includes("jpeg")
+    ? "image/jpeg"
+    : "image/png";
+
+  return `data:${mime};base64,${buffer.toString("base64")}`;
+}
+
+function getDimensions(size) {
+  const sizes = {
+    "1024x1024": [1024, 1024],
+    "1536x1024": [1536, 1024],
+    "1024x1536": [1024, 1536]
+  };
+
+  return sizes[size] || sizes["1024x1024"];
 }
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// Генерация
+// Генерация изображений
 app.post("/api/generate", async (req, res) => {
   try {
-    if (!checkApiKey(res)) return;
+    if (!checkConfig(res)) return;
 
-    const { prompt, size, quality } = req.body || {};
+    const { prompt, size } = req.body || {};
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
-      return res.status(400).json({ error: "Напиши описание изображения." });
+      return res.status(400).json({
+        error: "Напиши описание изображения."
+      });
     }
 
-    const response = await fetch("https://api.openai.com/v1/images/generations", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: IMAGE_MODEL,
-        prompt: prompt.trim(),
-        size: ["1024x1024", "1536x1024", "1024x1536"].includes(size)
-          ? size : "1024x1024",
-        quality: ["low", "medium", "high"].includes(quality)
-          ? quality : "medium"
-      })
-    });
+    const [width, height] = getDimensions(size);
 
-    const data = await response.json();
+    const form = new FormData();
 
-    if (!response.ok) {
-      return res.status(response.status).json({ error: errorMessage(data) });
-    }
+    form.append("prompt", prompt.trim());
+    form.append("width", String(width));
+    form.append("height", String(height));
 
-    const image = data?.data?.[0]?.b64_json;
+    const image = await runCloudflare(form);
 
-    if (!image) {
-      return res.status(500).json({ error: "Изображение не получено." });
-    }
+    res.json({ image });
 
-    res.json({ image: `data:image/png;base64,${image}` });
   } catch (error) {
     console.error("Generation error:", error);
-    res.status(500).json({ error: "Не удалось создать изображение." });
+
+    res.status(500).json({
+      error: error.message || "Не удалось создать изображение."
+    });
   }
 });
 
-// Редактирование
+// Редактирование изображений
 app.post("/api/edit", upload.single("image"), async (req, res) => {
   try {
-    if (!checkApiKey(res)) return;
+    if (!checkConfig(res)) return;
 
     const prompt = req.body.prompt;
 
     if (!prompt || !prompt.trim()) {
-      return res.status(400).json({ error: "Напиши, что изменить." });
+      return res.status(400).json({
+        error: "Напиши, что изменить."
+      });
     }
 
     if (!req.file) {
-      return res.status(400).json({ error: "Изображение не загружено." });
+      return res.status(400).json({
+        error: "Изображение не загружено."
+      });
     }
 
     const form = new FormData();
-    form.append("model", IMAGE_MODEL);
+
     form.append("prompt", prompt.trim());
-    form.append("size", "1024x1024");
-    form.append("quality", "medium");
+    form.append("width", "1024");
+    form.append("height", "1024");
 
     form.append(
-      "image",
-      new Blob([req.file.buffer], { type: req.file.mimetype }),
+      "input_image_0",
+      new Blob([req.file.buffer], {
+        type: req.file.mimetype
+      }),
       req.file.originalname || "image.png"
     );
 
-    const response = await fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${API_KEY}` },
-      body: form
-    });
+    const image = await runCloudflare(form);
 
-    const data = await response.json();
+    res.json({ image });
 
-    if (!response.ok) {
-      return res.status(response.status).json({ error: errorMessage(data) });
-    }
-
-    const image = data?.data?.[0]?.b64_json;
-
-    if (!image) {
-      return res.status(500).json({ error: "Изображение не получено." });
-    }
-
-    res.json({ image: `data:image/png;base64,${image}` });
   } catch (error) {
     console.error("Edit error:", error);
-    res.status(500).json({ error: "Не удалось отредактировать изображение." });
+
+    res.status(500).json({
+      error: error.message || "Не удалось отредактировать изображение."
+    });
   }
 });
 
 app.use((error, req, res, next) => {
   console.error(error);
-  res.status(400).json({ error: error.message || "Ошибка запроса." });
+
+  res.status(400).json({
+    error: error.message || "Ошибка запроса."
+  });
 });
 
 app.listen(PORT, () => {
