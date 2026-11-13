@@ -452,11 +452,11 @@ async function sendPrompt() {
   try {
     let result;
 
-    if (editImageId) {
-      result = await editImage(editImageId, prompt);
-    } else {
-      result = await generateImage(prompt, referenceFile);
-    }
+    if (editImageId && !referenceFile) {
+  result = await editImage(editImageId, prompt);
+} else {
+  result = await generateImage(prompt, referenceFile);
+}
 
     removeLoading();
 
