@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const express = require("express");
@@ -6,45 +7,43 @@ const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 const API_KEY = process.env.OPENAI_API_KEY;
 const IMAGE_MODEL = process.env.IMAGE_MODEL || "gpt-image-1";
 
 app.use(express.json({ limit: "10mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+
+// Все файлы сайта находятся в корне репозитория
+app.use(express.static(__dirname));
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 20 * 1024 * 1024
-  },
-  fileFilter: (req, file, cb) => {
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
     const allowed = ["image/png", "image/jpeg", "image/webp"];
-
     if (!allowed.includes(file.mimetype)) {
       return cb(new Error("Поддерживаются PNG, JPEG и WEBP."));
     }
-
     cb(null, true);
   }
 });
 
 function checkApiKey(res) {
   if (!API_KEY) {
-    res.status(500).json({
-      error: "На сервере не указан OPENAI_API_KEY."
-    });
+    res.status(500).json({ error: "Не настроен OPENAI_API_KEY на Render." });
     return false;
   }
-
   return true;
 }
 
-function getErrorMessage(data) {
-  return data?.error?.message || "Ошибка при обращении к сервису генерации.";
+function errorMessage(data) {
+  return data?.error?.message || "Ошибка сервиса генерации.";
 }
 
-// Генерация нового изображения
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
+// Генерация
 app.post("/api/generate", async (req, res) => {
   try {
     if (!checkApiKey(res)) return;
@@ -52,62 +51,45 @@ app.post("/api/generate", async (req, res) => {
     const { prompt, size, quality } = req.body || {};
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
-      return res.status(400).json({
-        error: "Напиши описание изображения."
-      });
+      return res.status(400).json({ error: "Напиши описание изображения." });
     }
 
-    const response = await fetch(
-      "https://api.openai.com/v1/images/generations",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: IMAGE_MODEL,
-          prompt: prompt.trim(),
-          size: ["1024x1024", "1536x1024", "1024x1536"].includes(size)
-            ? size
-            : "1024x1024",
-          quality: ["low", "medium", "high"].includes(quality)
-            ? quality
-            : "medium"
-        })
-      }
-    );
+    const response = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: IMAGE_MODEL,
+        prompt: prompt.trim(),
+        size: ["1024x1024", "1536x1024", "1024x1536"].includes(size)
+          ? size : "1024x1024",
+        quality: ["low", "medium", "high"].includes(quality)
+          ? quality : "medium"
+      })
+    });
 
     const data = await response.json();
 
     if (!response.ok) {
-      return res.status(response.status).json({
-        error: getErrorMessage(data)
-      });
+      return res.status(response.status).json({ error: errorMessage(data) });
     }
 
     const image = data?.data?.[0]?.b64_json;
 
     if (!image) {
-      return res.status(500).json({
-        error: "Сервис не вернул изображение."
-      });
+      return res.status(500).json({ error: "Изображение не получено." });
     }
 
-    res.json({
-      image: `data:image/png;base64,${image}`
-    });
-
+    res.json({ image: `data:image/png;base64,${image}` });
   } catch (error) {
     console.error("Generation error:", error);
-
-    res.status(500).json({
-      error: "Не удалось создать изображение."
-    });
+    res.status(500).json({ error: "Не удалось создать изображение." });
   }
 });
 
-// Редактирование существующего изображения
+// Редактирование
 app.post("/api/edit", upload.single("image"), async (req, res) => {
   try {
     if (!checkApiKey(res)) return;
@@ -115,78 +97,53 @@ app.post("/api/edit", upload.single("image"), async (req, res) => {
     const prompt = req.body.prompt;
 
     if (!prompt || !prompt.trim()) {
-      return res.status(400).json({
-        error: "Напиши, что нужно изменить."
-      });
+      return res.status(400).json({ error: "Напиши, что изменить." });
     }
 
     if (!req.file) {
-      return res.status(400).json({
-        error: "Изображение для редактирования не загружено."
-      });
+      return res.status(400).json({ error: "Изображение не загружено." });
     }
 
     const form = new FormData();
-
     form.append("model", IMAGE_MODEL);
     form.append("prompt", prompt.trim());
     form.append("size", "1024x1024");
     form.append("quality", "medium");
 
-    const imageBlob = new Blob(
-      [req.file.buffer],
-      { type: req.file.mimetype }
+    form.append(
+      "image",
+      new Blob([req.file.buffer], { type: req.file.mimetype }),
+      req.file.originalname || "image.png"
     );
 
-    form.append("image", imageBlob, req.file.originalname || "image.png");
-
-    const response = await fetch(
-      "https://api.openai.com/v1/images/edits",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${API_KEY}`
-        },
-        body: form
-      }
-    );
+    const response = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${API_KEY}` },
+      body: form
+    });
 
     const data = await response.json();
 
     if (!response.ok) {
-      return res.status(response.status).json({
-        error: getErrorMessage(data)
-      });
+      return res.status(response.status).json({ error: errorMessage(data) });
     }
 
     const image = data?.data?.[0]?.b64_json;
 
     if (!image) {
-      return res.status(500).json({
-        error: "Сервис не вернул отредактированное изображение."
-      });
+      return res.status(500).json({ error: "Изображение не получено." });
     }
 
-    res.json({
-      image: `data:image/png;base64,${image}`
-    });
-
+    res.json({ image: `data:image/png;base64,${image}` });
   } catch (error) {
     console.error("Edit error:", error);
-
-    res.status(500).json({
-      error: "Не удалось отредактировать изображение."
-    });
+    res.status(500).json({ error: "Не удалось отредактировать изображение." });
   }
 });
 
-// Обработка ошибок загрузки
 app.use((error, req, res, next) => {
   console.error(error);
-
-  res.status(400).json({
-    error: error.message || "Ошибка запроса."
-  });
+  res.status(400).json({ error: error.message || "Ошибка запроса." });
 });
 
 app.listen(PORT, () => {
