@@ -1,3 +1,4 @@
+
 * {
   box-sizing: border-box;
 }
@@ -350,6 +351,8 @@ nav {
   border-radius: 7px;
 }
 
+/* Поле сообщения */
+
 .composer {
   max-width: 850px;
   margin: auto;
@@ -372,10 +375,104 @@ nav {
   outline: none;
   color: white;
   padding: 12px;
+  min-width: 0;
 }
 
 .composer textarea::placeholder {
   color: #777783;
+}
+
+/* Кнопка прикрепления фото */
+
+.attach-btn {
+  width: 43px;
+  height: 43px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--panel-light);
+  color: #c6c6d0;
+  font-size: 21px;
+  transition: .2s;
+}
+
+.attach-btn:hover {
+  color: white;
+  border-color: var(--red);
+  background: #30212a;
+}
+
+.attach-btn:active {
+  transform: scale(.94);
+}
+
+/* Предпросмотр референсного фото */
+
+.reference-preview {
+  max-width: 850px;
+  margin: 0 auto 10px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  animation: referenceAppear .2s ease;
+}
+
+.reference-preview img {
+  display: block;
+  width: 58px;
+  height: 58px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #393943;
+  flex-shrink: 0;
+  background: var(--panel-light);
+}
+
+.reference-preview span {
+  flex: 1;
+  min-width: 0;
+  color: #d5d5dc;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-preview button {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #30212a;
+  color: #ff7188;
+  font-size: 21px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.reference-preview button:hover {
+  background: var(--red);
+  color: white;
+}
+
+@keyframes referenceAppear {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .send-btn {
@@ -532,6 +629,31 @@ nav {
 
   .settings {
     flex-wrap: wrap;
+  }
+
+  .composer {
+    gap: 7px;
+    padding: 8px;
+  }
+
+  .composer textarea {
+    padding: 10px 5px;
+    font-size: 14px;
+  }
+
+  .attach-btn,
+  .send-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .reference-preview {
+    padding: 8px;
+  }
+
+  .reference-preview img {
+    width: 52px;
+    height: 52px;
   }
 
   .gallery-page {
