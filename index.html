@@ -7,31 +7,24 @@
   <title>AI Image Generator</title>
   <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-
 <div class="app">
-
   <aside class="sidebar" id="sidebar">
     <div class="logo">
       <span class="logo-icon">AI</span>
       <span>IMAGE <b>GENERATOR</b></span>
     </div>
-
     <button class="new-chat" id="newChatBtn">
       <span>＋</span> Новый чат
     </button>
-
     <nav>
       <button class="nav-item active" data-page="generator">
         <span>✦</span> Генератор
       </button>
-
       <button class="nav-item" data-page="gallery">
         <span>▦</span> Моя галерея
       </button>
     </nav>
-
     <div class="sidebar-bottom">
       <div class="local-info">
         <span class="status-dot"></span>
@@ -40,41 +33,33 @@
       <div class="sidebar-version">AI IMAGE GENERATOR 1.0</div>
     </div>
   </aside>
-
   <main class="main">
-
     <header class="topbar">
       <button class="mobile-menu" id="mobileMenu">☰</button>
       <div class="page-title" id="pageTitle">Генератор изображений</div>
       <button class="clear-chat" id="clearChatBtn">Очистить чат</button>
     </header>
-
     <section class="generator-page" id="generatorPage">
-
       <div class="welcome" id="welcome">
         <div class="welcome-icon">✦</div>
         <h1>Создай своё изображение</h1>
         <p>Опиши словами то, что хочешь увидеть.</p>
-
         <div class="examples">
           <button class="example-card" data-prompt="Фотореалистичный футуристический город ночью, неоновые огни, кинематографическое освещение">
             <span>🌃</span>
             <b>Футуристический город</b>
             <small>Неон и фантастика</small>
           </button>
-
           <button class="example-card" data-prompt="Красивый фантастический замок среди гор, закат, детальная цифровая живопись">
             <span>🏰</span>
             <b>Фантастический замок</b>
             <small>Фэнтези и арт</small>
           </button>
-
           <button class="example-card" data-prompt="Профессиональный портрет человека в студии, мягкий свет, фотореализм">
             <span>📸</span>
             <b>Портрет</b>
             <small>Фотореализм</small>
           </button>
-
           <button class="example-card" data-prompt="Красивый персонаж в стиле японского аниме, детализированный фон">
             <span>🎨</span>
             <b>Аниме</b>
@@ -82,9 +67,7 @@
           </button>
         </div>
       </div>
-
       <div class="chat-messages" id="chatMessages"></div>
-
       <div class="composer-area">
         <div class="settings">
           <label>
@@ -95,7 +78,6 @@
               <option value="1024x1536">Вертикальный</option>
             </select>
           </label>
-
           <label>
             Качество
             <select id="imageQuality">
@@ -105,38 +87,50 @@
             </select>
           </label>
         </div>
-
+        <div class="reference-preview hidden" id="referencePreview">
+          <img id="referencePreviewImage" alt="Фото-образец">
+          <span id="referenceFileName">Фото-образец</span>
+          <button type="button" id="removeReferenceBtn" title="Убрать фото">×</button>
+        </div>
         <div class="composer">
+          <input
+            type="file"
+            id="referenceInput"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+          >
+          <button
+            type="button"
+            id="attachImageBtn"
+            class="attach-btn"
+            title="Прикрепить фото-образец"
+          >
+            📎
+          </button>
           <textarea
             id="promptInput"
             placeholder="Опиши изображение или напиши, что изменить..."
             rows="2"
           ></textarea>
-
           <button id="sendBtn" class="send-btn" title="Создать">
             ↑
           </button>
         </div>
-
         <div class="composer-hint">
           ИИ может ошибаться. Генерация изображений может расходовать средства API.
         </div>
       </div>
-
     </section>
-
     <section class="gallery-page hidden" id="galleryPage">
       <div class="gallery-heading">
         <div>
           <h1>Моя галерея</h1>
           <p>Твои сохранённые изображения</p>
         </div>
-
         <button id="clearGalleryBtn" class="danger-button">
           Очистить галерею
         </button>
       </div>
-
       <div id="galleryGrid" class="gallery-grid"></div>
       <div id="emptyGallery" class="empty-gallery">
         <span>▦</span>
@@ -144,13 +138,9 @@
         <p>Созданные изображения появятся здесь.</p>
       </div>
     </section>
-
   </main>
 </div>
-
 <div class="toast" id="toast"></div>
-
 <script src="app.js"></script>
-
 </body>
 </html>
