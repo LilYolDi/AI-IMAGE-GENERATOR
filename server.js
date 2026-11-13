@@ -443,3 +443,4 @@ app.listen(PORT, () => {
   console.log("Image model:", IMAGE_MODEL);
   console.log("Prompt model:", PROMPT_MODEL);
 });
+
