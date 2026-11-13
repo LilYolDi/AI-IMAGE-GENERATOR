@@ -358,19 +358,32 @@ async function addImageMessage(imageData, prompt) {
   await saveChat();
 }
 
-// ---------- Генерация ----------
+// ---------- Генерация с референсным фото ----------
 
-async function generateImage(prompt) {
+async function generateImage(prompt, referenceFile = null) {
+  const form = new FormData();
+
+  form.append("prompt", prompt);
+  form.append(
+    "size",
+    document.getElementById("imageSize").value
+  );
+  form.append(
+    "quality",
+    document.getElementById("imageQuality").value
+  );
+
+  if (referenceFile) {
+    form.append(
+      "reference",
+      referenceFile,
+      referenceFile.name
+    );
+  }
+
   const response = await fetch("/api/generate", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      prompt,
-      size: document.getElementById("imageSize").value,
-      quality: document.getElementById("imageQuality").value
-    })
+    body: form
   });
 
   const data = await response.json();
@@ -424,6 +437,7 @@ async function sendPrompt() {
   sendBtn.disabled = true;
 
   const editImageId = promptInput.dataset.editImageId;
+  const referenceFile = selectedReference;
 
   promptInput.value = "";
   delete promptInput.dataset.editImageId;
@@ -441,12 +455,16 @@ async function sendPrompt() {
     if (editImageId) {
       result = await editImage(editImageId, prompt);
     } else {
-      result = await generateImage(prompt);
+      result = await generateImage(prompt, referenceFile);
     }
 
     removeLoading();
 
     await addImageMessage(result, prompt);
+
+    if (referenceFile && selectedReference === referenceFile) {
+      removeReference();
+    }
 
     showToast(
       editImageId
