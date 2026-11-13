@@ -10,7 +10,10 @@ const PORT = process.env.PORT || 3000;
 
 const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
-const MODEL = "@cf/black-forest-labs/flux-2-klein-4b";
+
+const IMAGE_MODEL = "@cf/black-forest-labs/flux-2-klein-4b";
+const PROMPT_MODEL =
+  process.env.CLOUDFLARE_PROMPT_MODEL || "@cf/qwen/qwen3.8-27b";
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static(__dirname));
@@ -40,11 +43,139 @@ function checkConfig(res) {
   return true;
 }
 
-async function runCloudflare(form) {
-  const url =
-    `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/run/${MODEL}`;
+function cloudflareUrl(model) {
+  return `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/ai/run/${model}`;
+}
 
-  const response = await fetch(url, {
+async function readCloudflareError(response) {
+  const text = await response.text();
+
+  try {
+    const data = JSON.parse(text);
+
+    return (
+      data.errors?.map(item => item.message).join("; ") ||
+      data.error?.message ||
+      text
+    );
+  } catch {
+    return text;
+  }
+}
+
+// ---------- ИИ-обработка запросов ----------
+
+async function improvePrompt(originalPrompt, mode = "generate") {
+  const editing = mode === "edit";
+
+  const systemPrompt = editing
+    ? `
+You are a professional AI image editing prompt engineer.
+
+Convert the user's Russian editing instruction into a precise, natural English instruction for FLUX.2 Klein.
+
+STRICT RULES:
+- Preserve the exact meaning of the user's request.
+- Change ONLY the elements the user explicitly asks to change.
+- Preserve everything else in the original image.
+- Do not change faces, identity, age, gender, hairstyle, clothing, pose, background, objects or composition unless explicitly requested.
+- Do not invent additional objects, people or details.
+- Do not turn an editing request into a completely new image.
+- Use clear, direct English.
+- Output ONLY the final editing instruction.
+`
+    : `
+You are a professional image prompt engineer specializing in FLUX.2 Klein.
+
+Convert the user's Russian description into a precise, detailed English image generation prompt.
+
+YOUR MAIN GOAL:
+Make the generated image match the user's description as closely as possible.
+
+STRICT RULES:
+1. Preserve every important detail from the original request.
+2. Never change the requested subject, number of people, gender, age, appearance or identity.
+3. Preserve requested clothing, colors, hairstyle, facial features and accessories.
+4. Preserve the requested pose, actions, body position and interactions.
+5. Preserve the location, background, objects and environment.
+6. Preserve the requested camera angle, framing, lighting, atmosphere and visual style.
+7. Never add people, objects, animals or other elements that the user did not request.
+8. Do not replace specific details with generic descriptions.
+9. Do not contradict any part of the original request.
+10. If something is not specified, do not invent unnecessary details.
+11. Use natural, clear and precise English suitable for FLUX.2.
+12. Describe the scene as one coherent image, not as a story.
+
+IMPORTANT:
+The original user description is the source of truth.
+Your job is to translate and clarify it, NOT creatively reinterpret it.
+
+Return ONLY the final English image prompt.
+Do not include explanations, headings, quotation marks or comments.
+`;
+
+  const response = await fetch(cloudflareUrl(PROMPT_MODEL), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: originalPrompt.trim()
+        }
+      ],
+      max_completion_tokens: 700,
+      temperature: 0.2,
+      reasoning_effort: "low"
+    })
+  });
+
+  if (!response.ok) {
+    const error = await readCloudflareError(response);
+
+    throw new Error(
+      `Ошибка ИИ-обработки запроса (${response.status}): ${error}`
+    );
+  }
+
+  const data = await response.json();
+
+  let improved =
+    data.result?.response ||
+    data.result?.choices?.[0]?.message?.content ||
+    data.choices?.[0]?.message?.content;
+
+  if (typeof improved !== "string" || !improved.trim()) {
+    throw new Error("ИИ не смог подготовить описание изображения.");
+  }
+
+  improved = improved
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/^```(?:text)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  if (!improved) {
+    throw new Error("Получено пустое описание после обработки.");
+  }
+
+  console.log("Original prompt:", originalPrompt);
+  console.log("Improved prompt:", improved);
+
+  return improved;
+}
+
+// ---------- Генерация изображения ----------
+
+async function runCloudflare(form) {
+  const response = await fetch(cloudflareUrl(IMAGE_MODEL), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${API_TOKEN}`
@@ -55,18 +186,8 @@ async function runCloudflare(form) {
   const contentType = response.headers.get("content-type") || "";
 
   if (!response.ok) {
-    const errorText = await response.text();
-    let message = errorText;
-
-    try {
-      const errorData = JSON.parse(errorText);
-      message =
-        errorData.errors?.map(item => item.message).join("; ") ||
-        errorData.error?.message ||
-        errorText;
-    } catch {}
-
-    throw new Error(`Cloudflare (${response.status}): ${message}`);
+    const error = await readCloudflareError(response);
+    throw new Error(`Cloudflare (${response.status}): ${error}`);
   }
 
   if (contentType.includes("application/json")) {
@@ -109,11 +230,14 @@ function getDimensions(size) {
   return sizes[size] || sizes["1024x1024"];
 }
 
+// ---------- Главная ----------
+
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// Генерация изображений
+// ---------- Генерация ----------
+
 app.post("/api/generate", async (req, res) => {
   try {
     if (!checkConfig(res)) return;
@@ -126,11 +250,21 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
+    if (prompt.length > 6000) {
+      return res.status(400).json({
+        error: "Описание слишком длинное. Максимум 6000 символов."
+      });
+    }
+
+    console.log("Preparing generation prompt...");
+
+    const improvedPrompt = await improvePrompt(prompt, "generate");
+
     const [width, height] = getDimensions(size);
 
     const form = new FormData();
 
-    form.append("prompt", prompt.trim());
+    form.append("prompt", improvedPrompt);
     form.append("width", String(width));
     form.append("height", String(height));
 
@@ -147,14 +281,15 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-// Редактирование изображений
+// ---------- Редактирование ----------
+
 app.post("/api/edit", upload.single("image"), async (req, res) => {
   try {
     if (!checkConfig(res)) return;
 
     const prompt = req.body.prompt;
 
-    if (!prompt || !prompt.trim()) {
+    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return res.status(400).json({
         error: "Напиши, что изменить."
       });
@@ -166,9 +301,19 @@ app.post("/api/edit", upload.single("image"), async (req, res) => {
       });
     }
 
+    if (prompt.length > 6000) {
+      return res.status(400).json({
+        error: "Описание слишком длинное. Максимум 6000 символов."
+      });
+    }
+
+    console.log("Preparing editing prompt...");
+
+    const improvedPrompt = await improvePrompt(prompt, "edit");
+
     const form = new FormData();
 
-    form.append("prompt", prompt.trim());
+    form.append("prompt", improvedPrompt);
     form.append("width", "1024");
     form.append("height", "1024");
 
@@ -193,6 +338,8 @@ app.post("/api/edit", upload.single("image"), async (req, res) => {
   }
 });
 
+// ---------- Ошибки ----------
+
 app.use((error, req, res, next) => {
   console.error(error);
 
@@ -201,6 +348,10 @@ app.use((error, req, res, next) => {
   });
 });
 
+// ---------- Запуск ----------
+
 app.listen(PORT, () => {
-  console.log(`AI IMAGE GENERATOR running on port ${PORT}`);
+  console.log("AI IMAGE GENERATOR running on port " + PORT);
+  console.log("Image model:", IMAGE_MODEL);
+  console.log("Prompt model:", PROMPT_MODEL);
 });
